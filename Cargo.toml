@@ -32,7 +32,7 @@ version = "1"
 default-features = false
 features = ["float"]
 
-[dependencies.opentelemetry_sdk]
+[dev-dependencies.opentelemetry_sdk]
 version = "0.31"
 default-features = false
 features = ["metrics", "testing"]
