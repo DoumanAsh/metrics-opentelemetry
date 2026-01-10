@@ -1,0 +1,38 @@
+[package]
+name = "metrics-opentelemetry"
+version = "0.24.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Opentelemetry recorder for metrics crate"
+readme = "README.md"
+repository = "https://github.com/DoumanAsh/metrics-opentelemetry"
+license = "BSL-1.0"
+keywords = ["metrics", "opentelemetry"]
+include = [
+    "**/*.rs",
+    "Cargo.toml",
+    "README.md"
+]
+
+[dependencies.opentelemetry]
+version = "0.31"
+default-features = false
+features = ["metrics"]
+
+[dependencies.metrics]
+version = "0.24"
+default-features = false
+
+[dependencies.parking_lot]
+version = "0.12"
+default-features = false
+
+[dependencies.portable-atomic]
+version = "1"
+default-features = false
+features = ["float"]
+
+[dependencies.opentelemetry_sdk]
+version = "0.31"
+default-features = false
+features = ["metrics", "testing"]
