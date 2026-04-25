@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::borrow::Cow;
 use std::collections::hash_map::HashMap;
 use core::cell::Cell;
 use portable_atomic::{AtomicU64, AtomicF64, Ordering};
@@ -6,6 +7,14 @@ use portable_atomic::{AtomicU64, AtomicF64, Ordering};
 use crate::identity::IdentityHasherBuilder;
 use crate::metrics::{Key, KeyName, CounterFn, HistogramFn, GaugeFn, Unit};
 use opentelemetry::KeyValue;
+
+#[inline(always)]
+fn metrics_label_to_otel(label: &metrics::Label) -> KeyValue {
+    let (key, value) = label.clone().into_parts();
+    let key: Cow<'static, str> = key.into();
+    let value: Cow<'static, str> = value.into();
+    KeyValue::new(key, value)
+}
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -186,11 +195,11 @@ impl OpenTelemetryMetrics {
 
     fn create_counter(&self, key: &Key) -> Arc<Counter> {
         let key_name = key.name_shared();
-        let labels = key.labels().map(|label| KeyValue::new(label.key().to_owned(), label.value().to_owned())).collect::<Vec<_>>();
-        let mut counter = self.metrics.u64_observable_counter(key_name.to_owned());
+        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+        let mut counter = self.metrics.u64_observable_counter(key_name.clone().into_inner());
 
         if let Some(metadata) = self.metadata.counter.read().get(&key_name) {
-           counter = counter.with_description(metadata.description.to_owned());
+           counter = counter.with_description(metadata.description.clone());
            if let Some(unit) = metadata.unit {
                counter = counter.with_unit(unit);
            }
@@ -219,11 +228,12 @@ impl OpenTelemetryMetrics {
 
     fn create_gauge(&self, key: &Key) -> Arc<Gauge> {
         let key_name = key.name_shared();
-        let labels = key.labels().map(|label| KeyValue::new(label.key().to_owned(), label.value().to_owned())).collect::<Vec<_>>();
-        let mut gauge = self.metrics.f64_observable_gauge(key_name.to_owned());
+        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+
+        let mut gauge = self.metrics.f64_observable_gauge(key_name.clone().into_inner());
 
         if let Some(metadata) = self.metadata.gauge.read().get(&key_name) {
-           gauge = gauge.with_description(metadata.description.to_owned());
+           gauge = gauge.with_description(metadata.description.clone());
            if let Some(unit) = metadata.unit {
                gauge = gauge.with_unit(unit);
            }
@@ -252,11 +262,11 @@ impl OpenTelemetryMetrics {
 
     fn create_histogram(&self, key: &Key) -> Histogram {
         let key_name = key.name_shared();
-        let labels = key.labels().map(|label| KeyValue::new(label.key().to_owned(), label.value().to_owned())).collect();
-        let mut histogram = self.metrics.f64_histogram(key_name.to_owned());
+        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+        let mut histogram = self.metrics.f64_histogram(key_name.clone().into_inner());
 
         if let Some(metadata) = self.metadata.histogram.read().get(&key_name) {
-           histogram = histogram.with_description(metadata.description.to_owned());
+           histogram = histogram.with_description(metadata.description.clone());
            if let Some(unit) = metadata.unit {
                histogram = histogram.with_unit(unit);
            }
