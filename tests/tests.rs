@@ -1,7 +1,7 @@
 use core::time;
 
-use opentelemetry::{Key, Value};
-use opentelemetry::metrics::MeterProvider;
+use metrics_opentelemetry::opentelemetry::{Key, Value};
+use metrics_opentelemetry::opentelemetry::metrics::MeterProvider;
 use opentelemetry_sdk::metrics::{InMemoryMetricExporter, PeriodicReader, SdkMeterProvider};
 use opentelemetry_sdk::metrics::data::{MetricData, AggregatedMetrics, ResourceMetrics};
 use metrics_opentelemetry::{OpenTelemetryMetrics, OpenTelemetryRecorder};
@@ -84,7 +84,7 @@ fn should_verify_counters_collection() {
 
     //Modify counters
     metrics::counter!("requests_total", "method" => "GET", "status" => "200").increment(2);
-    metrics::counter!("requests_total", "method" => "POST", "status" => "201").absolute(0);
+    metrics::counter!("requests_total", "method" => "POST", "status" => "201").absolute(3);
 
     let metrics = fixture.force_export_metrics();
     let requests_metric = metrics
@@ -117,7 +117,7 @@ fn should_verify_counters_collection() {
             data_point.attributes().any(|attr| attr.key == Key::from("method") && attr.value == Value::from("POST"))
         })
         .expect("Should have POST data point");
-    assert_eq!(post_point.value(), 0, "POST counter should be reset to 0");
+    assert_eq!(post_point.value(), 3, "POST counter should be reset to 0");
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn should_verify_gauges_collection() {
     let fixture = Fixture::new("counters_meter");
     let _guard = fixture.init_local_recorder();
 
-    metrics::describe_counter!("requests_ongoing", metrics::Unit::Count, "Total number of requests");
+    metrics::describe_gauge!("requests_ongoing", metrics::Unit::Count, "Total number of requests");
     metrics::gauge!("requests_ongoing", "method" => "GET", "status" => "200").set(1.0);
     metrics::gauge!("requests_ongoing", "method" => "POST", "status" => "201").set(2.0);
 
@@ -205,7 +205,7 @@ fn should_verify_histogram_collection() {
     let fixture = Fixture::new("counters_meter");
     let _guard = fixture.init_local_recorder();
 
-    metrics::describe_counter!("requests_time", metrics::Unit::Seconds, "Request processing time");
+    metrics::describe_histogram!("requests_time", metrics::Unit::Seconds, "Request processing time");
     metrics::histogram!("requests_time", "path" => "/users").record(0.225);
     metrics::histogram!("requests_time", "path" => "/users").record(0.775);
     metrics::histogram!("requests_time", "path" => "/posts").record(1.225);

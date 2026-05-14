@@ -73,40 +73,77 @@ unsafe impl<T: Sync> Sync for UninitOtelItem<T> {}
 
 pub struct Counter {
     value: AtomicU64,
-    _otel: UninitOtelItem<opentelemetry::metrics::ObservableCounter<u64>>,
+    _otel: opentelemetry::metrics::Counter<u64>,
+    #[cfg(feature = "experimental_metrics_bound_instruments")]
+    bound_otel: opentelemetry::metrics::BoundCounter<u64>,
+    #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+    labels: Vec<KeyValue>
 }
 
 impl Counter {
     #[inline]
-    const fn new() -> Self {
+    fn new(_otel: opentelemetry::metrics::Counter<u64>, labels: Vec<KeyValue>) -> Self {
         Self {
-            _otel: UninitOtelItem::new_uninit(),
+            #[cfg(feature = "experimental_metrics_bound_instruments")]
+            bound_otel: _otel.bind(&labels),
+            #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+            labels,
+            _otel,
             value: AtomicU64::new(0),
         }
+    }
+
+    #[inline(always)]
+    fn add(&self, diff: u64) {
+        #[cfg(feature = "experimental_metrics_bound_instruments")]
+        self.bound_otel.add(diff);
+        #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+        self._otel.add(diff, &self.labels);
     }
 }
 
 impl CounterFn for Counter {
     #[inline(always)]
     fn absolute(&self, value: u64) {
-        self.value.store(value, Ordering::Release);
+        let prev = self.value.swap(value, Ordering::AcqRel);
+        //OTEL expects increasing counter, so it cannot have negative increment
+        self.add(value.saturating_sub(prev));
     }
 
     #[inline(always)]
     fn increment(&self, value: u64) {
-        self.value.fetch_add(value, Ordering::AcqRel);
+        self.value.fetch_add(value, Ordering::Release);
+        self.add(value);
     }
 }
 
 pub struct Histogram {
-    otel: opentelemetry::metrics::Histogram<f64>,
+    _otel: opentelemetry::metrics::Histogram<f64>,
+    #[cfg(feature = "experimental_metrics_bound_instruments")]
+    bound_otel: opentelemetry::metrics::BoundHistogram<f64>,
+    #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
     labels: Vec<KeyValue>
+}
+
+impl Histogram {
+    fn new(_otel: opentelemetry::metrics::Histogram<f64>, labels: Vec<KeyValue>) -> Self {
+        Self {
+            #[cfg(feature = "experimental_metrics_bound_instruments")]
+            bound_otel: _otel.bind(&labels),
+            #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+            labels,
+            _otel,
+        }
+    }
 }
 
 impl HistogramFn for Histogram {
     #[inline(always)]
     fn record(&self, value: f64) {
-        self.otel.record(value, &self.labels);
+        #[cfg(feature = "experimental_metrics_bound_instruments")]
+        self.bound_otel.record(value);
+        #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+        self._otel.record(value, &self.labels);
     }
 }
 
@@ -193,10 +230,10 @@ impl OpenTelemetryMetrics {
         }
     }
 
-    fn create_counter(&self, key: &Key) -> Arc<Counter> {
+    fn create_counter(&self, key: &Key) -> Counter {
         let key_name = key.name_shared();
         let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
-        let mut counter = self.metrics.u64_observable_counter(key_name.clone().into_inner());
+        let mut counter = self.metrics.u64_counter(key_name.to_owned());
 
         if let Some(metadata) = self.metadata.counter.read().get(&key_name) {
            counter = counter.with_description(metadata.description.clone());
@@ -205,13 +242,7 @@ impl OpenTelemetryMetrics {
            }
         }
 
-        let this = Arc::new(Counter::new());
-        let observe_this = this.clone();
-        let _counter = counter.with_callback(move |observer| {
-            observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
-        }).build();
-        this._otel.init(_counter);
-        this
+        Counter::new(counter.build(), labels)
     }
 
     pub(crate) fn get_or_create_counter(&self, key: &Key) -> Arc<Counter> {
@@ -220,7 +251,7 @@ impl OpenTelemetryMetrics {
             counter.clone()
         } else {
             let mut guard = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(guard);
-            let counter = self.create_counter(key);
+            let counter = Arc::new(self.create_counter(key));
             guard.insert(key.into(), counter.clone());
             counter
         }
@@ -272,10 +303,7 @@ impl OpenTelemetryMetrics {
            }
         }
 
-        Histogram {
-            otel: histogram.build(),
-            labels
-        }
+        Histogram::new(histogram.build(), labels)
     }
 
     pub(crate) fn get_or_create_histogram(&self, key: &Key) -> Arc<Histogram> {

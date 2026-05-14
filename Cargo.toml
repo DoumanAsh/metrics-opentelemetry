@@ -1,6 +1,7 @@
 [package]
 name = "metrics-opentelemetry"
-version = "0.24.1"
+# Major version is composed of <metrics><otel> versions
+version = "0.24032.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Opentelemetry recorder for metrics crate"
@@ -14,8 +15,12 @@ include = [
     "README.md"
 ]
 
+[features]
+# Enables opentelemetry bound counters with improved performance
+experimental_metrics_bound_instruments = ["opentelemetry/experimental_metrics_bound_instruments", "opentelemetry_sdk/experimental_metrics_bound_instruments"]
+
 [dependencies.opentelemetry]
-version = "0.31"
+version = "0.32"
 default-features = false
 features = ["metrics"]
 
@@ -33,6 +38,6 @@ default-features = false
 features = ["float"]
 
 [dev-dependencies.opentelemetry_sdk]
-version = "0.31"
+version = "0.32"
 default-features = false
 features = ["metrics", "testing"]
