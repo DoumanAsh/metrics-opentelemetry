@@ -73,47 +73,84 @@ unsafe impl<T: Sync> Sync for UninitOtelItem<T> {}
 
 pub struct Counter {
     value: AtomicU64,
+    #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+    _otel: UninitOtelItem<opentelemetry::metrics::ObservableCounter<u64>>,
+    #[cfg(feature = "experimental_metrics_bound_instruments")]
     _otel: opentelemetry::metrics::Counter<u64>,
     #[cfg(feature = "experimental_metrics_bound_instruments")]
     bound_otel: opentelemetry::metrics::BoundCounter<u64>,
-    #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-    labels: Vec<KeyValue>
 }
 
 impl Counter {
     #[inline]
-    fn new(_otel: opentelemetry::metrics::Counter<u64>, labels: Vec<KeyValue>) -> Self {
-        Self {
-            #[cfg(feature = "experimental_metrics_bound_instruments")]
-            bound_otel: _otel.bind(&labels),
-            #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-            labels,
-            _otel,
-            value: AtomicU64::new(0),
-        }
-    }
+    fn new(key: &Key, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore) -> Arc<Self> {
+        let key_name = key.name_shared();
+        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
 
-    #[inline(always)]
-    fn add(&self, diff: u64) {
         #[cfg(feature = "experimental_metrics_bound_instruments")]
-        self.bound_otel.add(diff);
+        {
+            let mut counter = metrics.u64_counter(key_name.clone().into_inner());
+
+            if let Some(metadata) = metadata.counter.read().get(&key_name) {
+                counter = counter.with_description(metadata.description.clone());
+                if let Some(unit) = metadata.unit {
+                    counter = counter.with_unit(unit);
+                }
+            }
+
+            let _otel = counter.build();
+            Arc::new(Self {
+                bound_otel: _otel.bind(&labels),
+                _otel,
+                value: AtomicU64::new(0),
+            })
+        }
+
         #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-        self._otel.add(diff, &self.labels);
+        {
+            let mut counter = metrics.u64_observable_counter(key_name.clone().into_inner());
+
+            if let Some(metadata) = metadata.counter.read().get(&key_name) {
+                counter = counter.with_description(metadata.description.clone());
+                if let Some(unit) = metadata.unit {
+                    counter = counter.with_unit(unit);
+                }
+            }
+            let this = Arc::new(Self {
+                _otel: UninitOtelItem::new_uninit(),
+                value: AtomicU64::new(0),
+            });
+            let observe_this = this.clone();
+            let _counter = counter.with_callback(move |observer| {
+                observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
+            }).build();
+            this._otel.init(_counter);
+            this
+        }
+
     }
 }
 
 impl CounterFn for Counter {
     #[inline(always)]
     fn absolute(&self, value: u64) {
-        let prev = self.value.swap(value, Ordering::AcqRel);
-        //OTEL expects increasing counter, so it cannot have negative increment
-        self.add(value.saturating_sub(prev));
+        #[cfg(feature = "experimental_metrics_bound_instruments")]
+        {
+            let prev = self.value.swap(value, Ordering::AcqRel);
+            //OTEL expects increasing counter, so it cannot have negative increment
+            self.bound_otel.add(value.saturating_sub(prev));
+        }
+        #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+        {
+            self.value.store(value, Ordering::Release);
+        }
     }
 
     #[inline(always)]
     fn increment(&self, value: u64) {
         self.value.fetch_add(value, Ordering::Release);
-        self.add(value);
+        #[cfg(feature = "experimental_metrics_bound_instruments")]
+        self.bound_otel.add(value);
     }
 }
 
@@ -230,28 +267,13 @@ impl OpenTelemetryMetrics {
         }
     }
 
-    fn create_counter(&self, key: &Key) -> Counter {
-        let key_name = key.name_shared();
-        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
-        let mut counter = self.metrics.u64_counter(key_name.to_owned());
-
-        if let Some(metadata) = self.metadata.counter.read().get(&key_name) {
-           counter = counter.with_description(metadata.description.clone());
-           if let Some(unit) = metadata.unit {
-               counter = counter.with_unit(unit);
-           }
-        }
-
-        Counter::new(counter.build(), labels)
-    }
-
     pub(crate) fn get_or_create_counter(&self, key: &Key) -> Arc<Counter> {
         let guard = self.instruments.counter.upgradable_read();
         if let Some(counter) = guard.get(&key.into()) {
             counter.clone()
         } else {
             let mut guard = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(guard);
-            let counter = Arc::new(self.create_counter(key));
+            let counter = Counter::new(key, &self.metrics, &self.metadata);
             guard.insert(key.into(), counter.clone());
             counter
         }

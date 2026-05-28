@@ -3,7 +3,7 @@
 [![Rust](https://github.com/DoumanAsh/metrics-opentelemetry/actions/workflows/rust.yml/badge.svg)](https://github.com/DoumanAsh/metrics-opentelemetry/actions/workflows/rust.yml)
 [![Crates.io](https://img.shields.io/crates/v/metrics-opentelemetry.svg)](https://crates.io/crates/metrics-opentelemetry)
 [![Documentation](https://docs.rs/metrics-opentelemetry/badge.svg)](https://docs.rs/crate/metrics-opentelemetry/)
-[![dependency status](https://deps.rs/crate/metrics-opentelemetry/0.24032.0/status.svg)](https://deps.rs/crate/metrics-opentelemetry/0.24032.0)
+[![dependency status](https://deps.rs/crate/metrics-opentelemetry/0.24032.1/status.svg)](https://deps.rs/crate/metrics-opentelemetry/0.24032.1)
 
 OpenTelemetry integration for [metrics](https://crates.io/crates/metrics).
 
