@@ -73,12 +73,7 @@ unsafe impl<T: Sync> Sync for UninitOtelItem<T> {}
 
 pub struct Counter {
     value: AtomicU64,
-    #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
     _otel: UninitOtelItem<opentelemetry::metrics::ObservableCounter<u64>>,
-    #[cfg(feature = "experimental_metrics_bound_instruments")]
-    _otel: opentelemetry::metrics::Counter<u64>,
-    #[cfg(feature = "experimental_metrics_bound_instruments")]
-    bound_otel: opentelemetry::metrics::BoundCounter<u64>,
 }
 
 impl Counter {
@@ -86,70 +81,36 @@ impl Counter {
     fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore) -> Arc<Self> {
         let key_name = key.name_shared();
 
-        #[cfg(feature = "experimental_metrics_bound_instruments")]
-        {
-            let mut counter = metrics.u64_counter(key_name.clone().into_inner());
+        let mut counter = metrics.u64_observable_counter(key_name.clone().into_inner());
 
-            if let Some(metadata) = metadata.counter.read().get(&key_name) {
-                counter = counter.with_description(metadata.description.clone());
-                if let Some(unit) = metadata.unit {
-                    counter = counter.with_unit(unit);
-                }
+        if let Some(metadata) = metadata.counter.read().get(&key_name) {
+            counter = counter.with_description(metadata.description.clone());
+            if let Some(unit) = metadata.unit {
+                counter = counter.with_unit(unit);
             }
-
-            let _otel = counter.build();
-            Arc::new(Self {
-                bound_otel: _otel.bind(&labels),
-                _otel,
-                value: AtomicU64::new(0),
-            })
         }
-
-        #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-        {
-            let mut counter = metrics.u64_observable_counter(key_name.clone().into_inner());
-
-            if let Some(metadata) = metadata.counter.read().get(&key_name) {
-                counter = counter.with_description(metadata.description.clone());
-                if let Some(unit) = metadata.unit {
-                    counter = counter.with_unit(unit);
-                }
-            }
-            let this = Arc::new(Self {
-                _otel: UninitOtelItem::new_uninit(),
-                value: AtomicU64::new(0),
-            });
-            let observe_this = this.clone();
-            let _counter = counter.with_callback(move |observer| {
-                observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
-            }).build();
-            this._otel.init(_counter);
-            this
-        }
-
+        let this = Arc::new(Self {
+            _otel: UninitOtelItem::new_uninit(),
+            value: AtomicU64::new(0),
+        });
+        let observe_this = this.clone();
+        let _counter = counter.with_callback(move |observer| {
+            observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
+        }).build();
+        this._otel.init(_counter);
+        this
     }
 }
 
 impl CounterFn for Counter {
     #[inline(always)]
     fn absolute(&self, value: u64) {
-        #[cfg(feature = "experimental_metrics_bound_instruments")]
-        {
-            let prev = self.value.swap(value, Ordering::AcqRel);
-            //OTEL expects increasing counter, so it cannot have negative increment
-            self.bound_otel.add(value.saturating_sub(prev));
-        }
-        #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-        {
-            self.value.store(value, Ordering::Release);
-        }
+        self.value.store(value, Ordering::Release);
     }
 
     #[inline(always)]
     fn increment(&self, value: u64) {
         self.value.fetch_add(value, Ordering::Release);
-        #[cfg(feature = "experimental_metrics_bound_instruments")]
-        self.bound_otel.add(value);
     }
 }
 
