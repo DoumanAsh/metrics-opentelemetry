@@ -19,6 +19,13 @@ fn metrics_label_to_otel(label: &metrics::Label) -> KeyValue {
     KeyValue::new(key, value)
 }
 
+fn metrics_labels_to_otel(key: &Key) -> Vec<KeyValue> {
+    let mut labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+    labels.sort_unstable_by(|a, b| a.key.cmp(&b.key));
+    labels.dedup_by(|a, b| a.key == b.key);
+    labels
+}
+
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct KeyIdentity(u64);
@@ -331,7 +338,7 @@ impl OpenTelemetryMetrics {
         if let Some(counter) = guard.get(&key.into()) {
             counter.clone()
         } else {
-            let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+            let labels = metrics_labels_to_otel(key);
 
             #[cfg(feature = "experimental_metrics_bound_instruments")]
             let counter = {
@@ -353,7 +360,7 @@ impl OpenTelemetryMetrics {
 
     fn create_gauge(&self, key: &Key) -> metrics::Gauge {
         let key_name = key.name_shared();
-        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+        let labels = metrics_labels_to_otel(key);
 
         let mut gauge = self.metrics.f64_observable_gauge(key_name.clone().into_inner());
 
@@ -413,7 +420,7 @@ impl OpenTelemetryMetrics {
             }
         };
 
-        let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
+        let labels = metrics_labels_to_otel(key);
         #[cfg(feature = "experimental_metrics_bound_instruments")]
         if labels.is_empty() {
             metrics::Histogram::from_arc(Arc::new(Histogram::new(histogram, labels)))
