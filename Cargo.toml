@@ -1,7 +1,7 @@
 [package]
 name = "metrics-opentelemetry"
 # Major version is composed of <metrics><otel> versions
-version = "0.24032.4"
+version = "0.24032.5"
 edition = "2024"
 rust-version = "1.85"
 description = "Opentelemetry recorder for metrics crate"

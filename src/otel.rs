@@ -268,10 +268,31 @@ impl Metadata {
 }
 
 #[derive(Default)]
+pub(crate) struct HistogramMetadata {
+    meta: Option<Metadata>,
+    bounds: Vec<f64>,
+}
+
+impl HistogramMetadata {
+    pub fn set_bounds(&mut self, bounds: Vec<f64>) {
+        self.bounds = bounds;
+    }
+}
+
+impl From<Metadata> for HistogramMetadata {
+    fn from(value: Metadata) -> Self {
+        Self {
+            meta: Some(value),
+            bounds: Vec::new(),
+        }
+    }
+}
+
+#[derive(Default)]
 pub(crate) struct MetadataStore {
     pub(crate) counter: parking_lot::RwLock<HashMap<KeyName, Metadata>>,
     pub(crate) gauge: parking_lot::RwLock<HashMap<KeyName, Metadata>>,
-    pub(crate) histogram: parking_lot::RwLock<HashMap<KeyName, Metadata>>,
+    pub(crate) histogram: parking_lot::RwLock<HashMap<KeyName, HistogramMetadata>>,
 }
 
 #[derive(Default)]
@@ -375,9 +396,14 @@ impl OpenTelemetryMetrics {
                     let mut histogram = self.metrics.f64_histogram(key_name.clone().into_inner());
 
                     if let Some(metadata) = self.metadata.histogram.read().get(&key_name) {
-                        histogram = histogram.with_description(metadata.description.clone());
-                        if let Some(unit) = metadata.unit {
-                            histogram = histogram.with_unit(unit);
+                        if let Some(meta) = &metadata.meta {
+                            histogram = histogram.with_description(meta.description.clone());
+                            if let Some(unit) = meta.unit {
+                                histogram = histogram.with_unit(unit);
+                            }
+                        }
+                        if !metadata.bounds.is_empty() {
+                            histogram = histogram.with_boundaries(metadata.bounds.clone());
                         }
                     }
                     let histogram = histogram.build();

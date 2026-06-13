@@ -48,10 +48,31 @@ pub struct OpenTelemetryRecorder {
 }
 
 impl OpenTelemetryRecorder {
+    #[inline]
     ///Creates new instance from initialized opentelemetry metrics
     pub fn new(metrics: OpenTelemetryMetrics) -> Self {
         Self {
             metrics,
+        }
+    }
+
+    #[inline]
+    ///Sets boundaries for set of histograms with specified key names.
+    ///
+    ///Implies lock, if you have full control, then prefer `*_mut` version
+    pub fn set_histogram_bounds(&self, keys: impl Iterator<Item = impl Into<metrics::KeyName>>, bounds: &[f64]) {
+        let mut histograms = self.metrics.metadata.histogram.write();
+        for key in keys {
+            histograms.entry(key.into()).or_default().set_bounds(bounds.to_vec());
+        }
+    }
+
+    #[inline]
+    ///Sets boundaries for set of histograms with specified key names.
+    pub fn set_histogram_bounds_mut(&mut self, keys: impl Iterator<Item = impl Into<metrics::KeyName>>, bounds: &[f64]) {
+        let histograms = self.metrics.metadata.histogram.get_mut();
+        for key in keys {
+            histograms.entry(key.into()).or_default().set_bounds(bounds.to_vec());
         }
     }
 }
@@ -80,7 +101,7 @@ impl metrics::Recorder for OpenTelemetryRecorder {
     #[inline]
     fn describe_histogram(&self, key: metrics::KeyName, unit: Option<metrics::Unit>, description: metrics::SharedString) {
         let description = otel::Metadata::from_metrics(description, unit);
-        self.metrics.metadata.counter.write().insert(key, description);
+        self.metrics.metadata.histogram.write().insert(key, description.into());
     }
     #[inline]
     fn register_histogram(&self, key: &metrics::Key, _metadata: &metrics::Metadata<'_>) -> metrics::Histogram {
