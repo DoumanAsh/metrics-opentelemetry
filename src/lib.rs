@@ -64,9 +64,7 @@ impl metrics::Recorder for OpenTelemetryRecorder {
     }
     #[inline]
     fn register_counter(&self, key: &metrics::Key, _metadata: &metrics::Metadata<'_>) -> metrics::Counter {
-        metrics::Counter::from_arc(
-            self.metrics.get_or_create_counter(key)
-        )
+        self.metrics.get_or_create_counter(key)
     }
 
     #[inline]
@@ -76,9 +74,7 @@ impl metrics::Recorder for OpenTelemetryRecorder {
     }
     #[inline]
     fn register_gauge(&self, key: &metrics::Key, _metadata: &metrics::Metadata<'_>) -> metrics::Gauge {
-        metrics::Gauge::from_arc(
-            self.metrics.get_or_create_gauge(key)
-        )
+        self.metrics.get_or_create_gauge(key)
     }
 
     #[inline]
@@ -88,8 +84,6 @@ impl metrics::Recorder for OpenTelemetryRecorder {
     }
     #[inline]
     fn register_histogram(&self, key: &metrics::Key, _metadata: &metrics::Metadata<'_>) -> metrics::Histogram {
-        metrics::Histogram::from_arc(
-            self.metrics.get_or_create_histogram(key)
-        )
+        self.metrics.get_or_create_histogram(key)
     }
 }
