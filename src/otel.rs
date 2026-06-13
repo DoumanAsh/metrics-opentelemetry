@@ -264,6 +264,7 @@ pub(crate) struct MetadataStore {
 pub(crate) struct InstrumentsStore {
     pub(crate) counter: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Counter, IdentityHasherBuilder>>,
     pub(crate) gauge: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Gauge, IdentityHasherBuilder>>,
+    otel_histogram: parking_lot::RwLock<HashMap<KeyName, opentelemetry::metrics::Histogram<f64>>>,
     pub(crate) histogram: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Histogram, IdentityHasherBuilder>>,
 }
 
@@ -293,7 +294,6 @@ impl OpenTelemetryMetrics {
         if let Some(counter) = guard.get(&key.into()) {
             counter.clone()
         } else {
-            let mut guard = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(guard);
             let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
 
             #[cfg(feature = "experimental_metrics_bound_instruments")]
@@ -307,6 +307,8 @@ impl OpenTelemetryMetrics {
 
             #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
             let counter = metrics::Counter::from_arc(Counter::new(key, labels, &self.metrics, &self.metadata));
+
+            let mut guard = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(guard);
             guard.insert(key.into(), counter.clone());
             counter
         }
@@ -348,25 +350,37 @@ impl OpenTelemetryMetrics {
 
     fn create_histogram(&self, key: &Key) -> metrics::Histogram {
         let key_name = key.name_shared();
+
+        let histogram = {
+            let otel_histograms = self.instruments.otel_histogram.upgradable_read();
+            match otel_histograms.get(&key_name) {
+                Some(histogram) => histogram.clone(),
+                None => {
+                    let mut histogram = self.metrics.f64_histogram(key_name.clone().into_inner());
+
+                    if let Some(metadata) = self.metadata.histogram.read().get(&key_name) {
+                        histogram = histogram.with_description(metadata.description.clone());
+                        if let Some(unit) = metadata.unit {
+                            histogram = histogram.with_unit(unit);
+                        }
+                    }
+                    let histogram = histogram.build();
+                    parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(otel_histograms).insert(key_name.clone(), histogram.clone());
+                    histogram
+                }
+            }
+        };
+
         let labels = key.labels().map(metrics_label_to_otel).collect::<Vec<_>>();
-        let mut histogram = self.metrics.f64_histogram(key_name.clone().into_inner());
-
-        if let Some(metadata) = self.metadata.histogram.read().get(&key_name) {
-           histogram = histogram.with_description(metadata.description.clone());
-           if let Some(unit) = metadata.unit {
-               histogram = histogram.with_unit(unit);
-           }
-        }
-
         #[cfg(feature = "experimental_metrics_bound_instruments")]
         if labels.is_empty() {
-            metrics::Histogram::from_arc(Arc::new(Histogram::new(histogram.build(), labels)))
+            metrics::Histogram::from_arc(Arc::new(Histogram::new(histogram, labels)))
         } else {
-            metrics::Histogram::from_arc(Arc::new(BoundHistogram::new(histogram.build(), labels)))
+            metrics::Histogram::from_arc(Arc::new(BoundHistogram::new(histogram, labels)))
         }
 
         #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
-        metrics::Histogram::from_arc(Arc::new(Histogram::new(histogram.build(), labels)))
+        metrics::Histogram::from_arc(Arc::new(Histogram::new(histogram, labels)))
     }
 
     pub(crate) fn get_or_create_histogram(&self, key: &Key) -> metrics::Histogram {
