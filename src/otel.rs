@@ -8,6 +8,9 @@ use crate::identity::IdentityHasherBuilder;
 use crate::metrics::{Key, KeyName, CounterFn, HistogramFn, GaugeFn, Unit};
 use opentelemetry::KeyValue;
 
+#[cfg(feature = "experimental_metrics_bound_instruments")]
+type OtelCountersCache = parking_lot::RwLock<HashMap<KeyName, opentelemetry::metrics::Counter<u64>>>;
+
 #[inline(always)]
 fn metrics_label_to_otel(label: &metrics::Label) -> KeyValue {
     let (key, value) = label.clone().into_parts();
@@ -117,27 +120,38 @@ impl CounterFn for Counter {
 #[cfg(feature = "experimental_metrics_bound_instruments")]
 pub struct BoundCounter {
     value: AtomicU64,
-    _otel: opentelemetry::metrics::Counter<u64>,
     bound_otel: opentelemetry::metrics::BoundCounter<u64>,
 }
 
 #[cfg(feature = "experimental_metrics_bound_instruments")]
 impl BoundCounter {
-    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore) -> Arc<Self> {
+    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore, otel_counters: &OtelCountersCache) -> Arc<Self> {
         let key_name = key.name_shared();
-        let mut counter = metrics.u64_counter(key_name.clone().into_inner());
+        let otel = {
+            let otel_counters = otel_counters.upgradable_read();
+            match otel_counters.get(&key_name) {
+                Some(counter) => counter.clone(),
+                None => {
+                    let mut counter = metrics.u64_counter(key_name.clone().into_inner());
 
-        if let Some(metadata) = metadata.counter.read().get(&key_name) {
-            counter = counter.with_description(metadata.description.clone());
-            if let Some(unit) = metadata.unit {
-                counter = counter.with_unit(unit);
+                    if let Some(metadata) = metadata.counter.read().get(&key_name) {
+                        counter = counter.with_description(metadata.description.clone());
+                        if let Some(unit) = metadata.unit {
+                            counter = counter.with_unit(unit);
+                        }
+                    }
+                    let counter = counter.build();
+                    parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(otel_counters).insert(key_name.clone(), counter.clone());
+                    counter
+                }
             }
-        }
+        };
 
-        let _otel = counter.build();
+        let bound_otel = otel.bind(&labels);
+        //Ensure counter is initialized as soon as possible in case of application restart (if SDK supports it I guess?)
+        bound_otel.add(0);
         Arc::new(Self {
-            bound_otel: _otel.bind(&labels),
-            _otel,
+            bound_otel,
             value: AtomicU64::new(0),
         })
     }
@@ -262,6 +276,8 @@ pub(crate) struct MetadataStore {
 
 #[derive(Default)]
 pub(crate) struct InstrumentsStore {
+    #[cfg(feature = "experimental_metrics_bound_instruments")]
+    otel_counter: OtelCountersCache,
     pub(crate) counter: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Counter, IdentityHasherBuilder>>,
     pub(crate) gauge: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Gauge, IdentityHasherBuilder>>,
     otel_histogram: parking_lot::RwLock<HashMap<KeyName, opentelemetry::metrics::Histogram<f64>>>,
@@ -301,7 +317,7 @@ impl OpenTelemetryMetrics {
                 if labels.is_empty() {
                     metrics::Counter::from_arc(Counter::new(key, labels, &self.metrics, &self.metadata))
                 } else {
-                    metrics::Counter::from_arc(BoundCounter::new(key, labels, &self.metrics, &self.metadata))
+                    metrics::Counter::from_arc(BoundCounter::new(key, labels, &self.metrics, &self.metadata, &self.instruments.otel_counter))
                 }
             };
 
