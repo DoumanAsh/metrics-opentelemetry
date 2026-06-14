@@ -284,6 +284,10 @@ impl HistogramMetadata {
     pub fn set_bounds(&mut self, bounds: Vec<f64>) {
         self.bounds = bounds;
     }
+
+    pub fn set_metadata(&mut self, metadata: Metadata) {
+        self.meta = Some(metadata);
+    }
 }
 
 impl From<Metadata> for HistogramMetadata {

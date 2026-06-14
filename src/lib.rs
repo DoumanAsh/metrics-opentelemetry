@@ -108,7 +108,7 @@ impl metrics::Recorder for OpenTelemetryRecorder {
     #[inline]
     fn describe_histogram(&self, key: metrics::KeyName, unit: Option<metrics::Unit>, description: metrics::SharedString) {
         let description = otel::Metadata::from_metrics(description, unit);
-        self.metrics.metadata.histogram.write().insert(key, description.into());
+        self.metrics.metadata.histogram.write().entry(key).or_default().set_metadata(description);
     }
     #[inline]
     fn register_histogram(&self, key: &metrics::Key, _metadata: &metrics::Metadata<'_>) -> metrics::Histogram {
