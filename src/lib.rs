@@ -2,7 +2,14 @@
 //!
 //! MSRV 1.85
 //!
-//! ## Usage
+//!## Versioning
+//!
+//!This crate version scheme is as following: `0.<metrics><otel>.X`
+//!
+//!- `metrics` - Will always match supported `metrics` version. Current is `0.24`
+//!- `otel` - Will always match supported `opentelemetry` version. Current version is `0.32`
+//!
+//!## Usage
 //!
 //!Example of initialization using in memory exporter
 //!

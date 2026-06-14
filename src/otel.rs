@@ -120,7 +120,7 @@ impl CounterFn for Counter {
 
     #[inline(always)]
     fn increment(&self, value: u64) {
-        self.value.fetch_add(value, Ordering::Release);
+        self.value.fetch_add(value, Ordering::AcqRel);
     }
 }
 
