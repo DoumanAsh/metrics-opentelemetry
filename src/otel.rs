@@ -281,12 +281,19 @@ pub(crate) struct HistogramMetadata {
 }
 
 impl HistogramMetadata {
+    #[inline]
     pub fn set_bounds(&mut self, bounds: Vec<f64>) {
         self.bounds = bounds;
+    }
+
+    #[inline]
+    pub fn set_metadata(&mut self, meta: Metadata) {
+        self.meta = Some(meta);
     }
 }
 
 impl From<Metadata> for HistogramMetadata {
+    #[inline]
     fn from(value: Metadata) -> Self {
         Self {
             meta: Some(value),
