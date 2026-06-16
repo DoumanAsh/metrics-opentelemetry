@@ -171,7 +171,6 @@ impl CounterFn for BoundCounter {
         let prev = self.value.swap(value, Ordering::AcqRel);
         //OTEL expects increasing counter, so it cannot have negative increment
         self.bound_otel.add(value.saturating_sub(prev));
-        self.value.store(value, Ordering::Release);
     }
 
     #[inline(always)]
