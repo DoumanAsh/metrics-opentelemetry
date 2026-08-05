@@ -38,6 +38,13 @@
 //!get_requests.increment(1);
 //!post_requests.increment(2);
 //!```
+//!
+//!### metrics discrepancies
+//!
+//!When using counters, OTEL instrumentation does not allow decrementing current value of the
+//!counter.
+//!
+//!When attempting to set absolute value below current value, it will not take effect and value shall remain the same
 
 #![warn(missing_docs)]
 #![allow(clippy::style)]

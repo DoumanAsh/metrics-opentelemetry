@@ -3,7 +3,7 @@
 [![Rust](https://github.com/DoumanAsh/metrics-opentelemetry/actions/workflows/rust.yml/badge.svg)](https://github.com/DoumanAsh/metrics-opentelemetry/actions/workflows/rust.yml)
 [![Crates.io](https://img.shields.io/crates/v/metrics-opentelemetry.svg)](https://crates.io/crates/metrics-opentelemetry)
 [![Documentation](https://docs.rs/metrics-opentelemetry/badge.svg)](https://docs.rs/crate/metrics-opentelemetry/)
-[![dependency status](https://deps.rs/crate/metrics-opentelemetry/0.24032.8/status.svg)](https://deps.rs/crate/metrics-opentelemetry/0.24032.8)
+[![dependency status](https://deps.rs/crate/metrics-opentelemetry/0.24032.9/status.svg)](https://deps.rs/crate/metrics-opentelemetry/0.24032.9)
 
 OpenTelemetry integration for [metrics](https://crates.io/crates/metrics).
 
@@ -45,3 +45,10 @@ let post_requests = metrics::counter!("requests_total", "method" => "POST", "sta
 get_requests.increment(1);
 post_requests.increment(2);
 ```
+
+### metrics discrepancies
+
+When using counters, OTEL instrumentation does not allow decrementing current value of the
+counter.
+
+When attempting to set absolute value below current value, it will not take effect and value shall remain the same (the latest highest value available)

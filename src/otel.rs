@@ -115,7 +115,7 @@ impl Counter {
 impl CounterFn for Counter {
     #[inline(always)]
     fn absolute(&self, value: u64) {
-        self.value.store(value, Ordering::Release);
+        self.value.fetch_max(value, Ordering::AcqRel);
     }
 
     #[inline(always)]
@@ -168,7 +168,7 @@ impl BoundCounter {
 impl CounterFn for BoundCounter {
     #[inline(always)]
     fn absolute(&self, value: u64) {
-        let prev = self.value.swap(value, Ordering::AcqRel);
+        let prev = self.value.fetch_max(value, Ordering::AcqRel);
         //OTEL expects increasing counter, so it cannot have negative increment
         self.bound_otel.add(value.saturating_sub(prev));
     }

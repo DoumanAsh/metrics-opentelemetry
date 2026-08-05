@@ -85,6 +85,8 @@ fn should_verify_counters_collection() {
     //Modify counters
     metrics::counter!("requests_total", "method" => "GET", "status" => "200").increment(2);
     metrics::counter!("requests_total", "method" => "POST", "status" => "201").absolute(3);
+    //verify we cannot decrement
+    metrics::counter!("requests_total", "method" => "POST", "status" => "201").absolute(2);
 
     let metrics = fixture.force_export_metrics();
     let requests_metric = metrics
