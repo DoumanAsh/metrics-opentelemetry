@@ -8,8 +8,7 @@ use crate::identity::IdentityHasherBuilder;
 use crate::metrics::{Key, KeyName, CounterFn, HistogramFn, GaugeFn, Unit};
 use opentelemetry::KeyValue;
 
-#[cfg(feature = "experimental_metrics_bound_instruments")]
-type OtelCountersCache = parking_lot::RwLock<HashMap<KeyName, opentelemetry::metrics::Counter<u64>>>;
+type OtelCache<T> = parking_lot::RwLock<HashMap<KeyName, T>>;
 
 #[inline(always)]
 fn metrics_label_to_otel(label: &metrics::Label) -> KeyValue {
@@ -99,6 +98,7 @@ impl Counter {
                 counter = counter.with_unit(unit);
             }
         }
+
         let this = Arc::new(Self {
             _otel: UninitOtelItem::new_uninit(),
             value: AtomicU64::new(0),
@@ -132,11 +132,11 @@ pub struct BoundCounter {
 
 #[cfg(feature = "experimental_metrics_bound_instruments")]
 impl BoundCounter {
-    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore, otel_counters: &OtelCountersCache) -> Arc<Self> {
+    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore, otel_cache: &OtelCache<opentelemetry::metrics::Counter<u64>>) -> Arc<Self> {
         let key_name = key.name_shared();
         let otel = {
-            let otel_counters = otel_counters.upgradable_read();
-            match otel_counters.get(&key_name) {
+            let otel_cache = otel_cache.upgradable_read();
+            match otel_cache.get(&key_name) {
                 Some(counter) => counter.clone(),
                 None => {
                     let mut counter = metrics.u64_counter(key_name.clone().into_inner());
@@ -148,7 +148,7 @@ impl BoundCounter {
                         }
                     }
                     let counter = counter.build();
-                    parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(otel_counters).insert(key_name.clone(), counter.clone());
+                    parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(otel_cache).insert(key_name.clone(), counter.clone());
                     counter
                 }
             }
@@ -232,11 +232,28 @@ pub struct Gauge {
 
 impl Gauge {
     #[inline]
-    const fn new() -> Self {
-        Self {
+    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore) -> Arc<Self> {
+        let key_name = key.name_shared();
+
+        let mut gauge = metrics.f64_observable_gauge(key_name.clone().into_inner());
+
+        if let Some(metadata) = metadata.gauge.read().get(&key_name) {
+           gauge = gauge.with_description(metadata.description.clone());
+           if let Some(unit) = metadata.unit {
+               gauge = gauge.with_unit(unit);
+           }
+        }
+
+        let this = Arc::new(Self {
             _otel: UninitOtelItem::new_uninit(),
             value: AtomicF64::new(0.0),
-        }
+        });
+        let observe_this = this.clone();
+        let _gauge = gauge.with_callback(move |observer| {
+            observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
+        }).build();
+        this._otel.init(_gauge);
+        this
     }
 }
 
@@ -252,6 +269,65 @@ impl GaugeFn for Gauge {
     #[inline(always)]
     fn decrement(&self, value: f64) {
         self.value.fetch_sub(value, Ordering::AcqRel);
+    }
+}
+
+#[cfg(feature = "experimental_metrics_bound_instruments")]
+pub struct BoundGauge {
+    value: AtomicF64,
+    bound_otel: opentelemetry::metrics::BoundGauge<f64>,
+}
+
+#[cfg(feature = "experimental_metrics_bound_instruments")]
+impl BoundGauge {
+    fn new(key: &Key, labels: Vec<KeyValue>, metrics: &opentelemetry::metrics::Meter, metadata: &MetadataStore, otel_cache: &OtelCache<opentelemetry::metrics::Gauge<f64>>) -> Arc<Self> {
+        let key_name = key.name_shared();
+        let otel = {
+            let otel_cache = otel_cache.upgradable_read();
+            match otel_cache.get(&key_name) {
+                Some(gauge) => gauge.clone(),
+                None => {
+                    let mut gauge = metrics.f64_gauge(key_name.clone().into_inner());
+
+                    if let Some(metadata) = metadata.gauge.read().get(&key_name) {
+                        gauge = gauge.with_description(metadata.description.clone());
+                        if let Some(unit) = metadata.unit {
+                            gauge = gauge.with_unit(unit);
+                        }
+                    }
+                    let gauge = gauge.build();
+                    parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(otel_cache).insert(key_name.clone(), gauge.clone());
+                    gauge
+                }
+            }
+        };
+
+        let bound_otel = otel.bind(&labels);
+        Arc::new(Self {
+            bound_otel,
+            value: AtomicF64::new(0.0),
+        })
+    }
+}
+
+#[cfg(feature = "experimental_metrics_bound_instruments")]
+impl GaugeFn for BoundGauge {
+    #[inline(always)]
+    fn set(&self, value: f64) {
+        self.value.store(value, Ordering::Release);
+        self.bound_otel.record(value);
+    }
+
+    #[inline(always)]
+    fn increment(&self, value: f64) {
+        let prev = self.value.fetch_add(value, Ordering::AcqRel);
+        self.bound_otel.record(prev + value);
+    }
+
+    #[inline(always)]
+    fn decrement(&self, value: f64) {
+        let prev = self.value.fetch_sub(value, Ordering::AcqRel);
+        self.bound_otel.record(prev - value);
     }
 }
 
@@ -310,11 +386,15 @@ pub(crate) struct MetadataStore {
 
 #[derive(Default)]
 pub(crate) struct InstrumentsStore {
+    //Cache is only used when bounded implementation is used as there is no observable bound interface
     #[cfg(feature = "experimental_metrics_bound_instruments")]
-    otel_counter: OtelCountersCache,
+    otel_counter: OtelCache<opentelemetry::metrics::Counter<u64>>,
+    #[cfg(feature = "experimental_metrics_bound_instruments")]
+    otel_gauge: OtelCache<opentelemetry::metrics::Gauge<f64>>,
+    //Histograms do not use observable alternatives so we can always benefit from caching it
+    otel_histogram: OtelCache<opentelemetry::metrics::Histogram<f64>>,
     pub(crate) counter: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Counter, IdentityHasherBuilder>>,
     pub(crate) gauge: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Gauge, IdentityHasherBuilder>>,
-    otel_histogram: parking_lot::RwLock<HashMap<KeyName, opentelemetry::metrics::Histogram<f64>>>,
     pub(crate) histogram: parking_lot::RwLock<HashMap<KeyIdentity, metrics::Histogram, IdentityHasherBuilder>>,
 }
 
@@ -364,35 +444,26 @@ impl OpenTelemetryMetrics {
         }
     }
 
-    fn create_gauge(&self, key: &Key) -> metrics::Gauge {
-        let key_name = key.name_shared();
-        let labels = metrics_labels_to_otel(key);
-
-        let mut gauge = self.metrics.f64_observable_gauge(key_name.clone().into_inner());
-
-        if let Some(metadata) = self.metadata.gauge.read().get(&key_name) {
-           gauge = gauge.with_description(metadata.description.clone());
-           if let Some(unit) = metadata.unit {
-               gauge = gauge.with_unit(unit);
-           }
-        }
-
-        let this = Arc::new(Gauge::new());
-        let observe_this = this.clone();
-        let _gauge = gauge.with_callback(move |observer| {
-            observer.observe(observe_this.value.load(Ordering::Acquire), &labels);
-        }).build();
-        this._otel.init(_gauge);
-        metrics::Gauge::from_arc(this)
-    }
-
     pub(crate) fn get_or_create_gauge(&self, key: &Key) -> metrics::Gauge {
         let guard = self.instruments.gauge.upgradable_read();
         if let Some(gauge) = guard.get(&key.into()) {
             gauge.clone()
         } else {
+            let labels = metrics_labels_to_otel(key);
+
+            #[cfg(feature = "experimental_metrics_bound_instruments")]
+            let gauge = {
+                if labels.is_empty() {
+                    metrics::Gauge::from_arc(Gauge::new(key, labels, &self.metrics, &self.metadata))
+                } else {
+                    metrics::Gauge::from_arc(BoundGauge::new(key, labels, &self.metrics, &self.metadata, &self.instruments.otel_gauge))
+                }
+            };
+
+            #[cfg(not(feature = "experimental_metrics_bound_instruments"))]
+            let gauge = metrics::Gauge::from_arc(Gauge::new(key, labels, &self.metrics, &self.metadata));
+
             let mut guard = parking_lot::lock_api::RwLockUpgradableReadGuard::upgrade(guard);
-            let gauge = self.create_gauge(key);
             guard.insert(key.into(), gauge.clone());
             gauge
         }
