@@ -5,7 +5,7 @@
 [![Documentation](https://docs.rs/metrics-opentelemetry/badge.svg)](https://docs.rs/crate/metrics-opentelemetry/)
 [![dependency status](https://deps.rs/crate/metrics-opentelemetry/0.24033.1/status.svg)](https://deps.rs/crate/metrics-opentelemetry/0.24033.1)
 
-OpenTelemetry integration for [metrics](https://crates.io/crates/metrics).
+[OpenTelemetry](https://crates.io/crates/opentelemetry) integration for [metrics](https://crates.io/crates/metrics).
 
 MSRV 1.85
 
@@ -52,3 +52,7 @@ When using counters, OTEL instrumentation does not allow decrementing current va
 counter.
 
 When attempting to set absolute value below current value, it will not take effect and value shall remain the same (the latest highest value available)
+
+### Datadog usage
+
+When using OTEL receiver on Datadog it is recommended to configure OTEL SDK to use [Delta](https://docs.rs/opentelemetry_sdk/0.33.1/opentelemetry_sdk/metrics/enum.Temporality.html#variant.Delta) temporality which is what datadog's dogstatsd metrics system uses.
